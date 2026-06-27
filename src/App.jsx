@@ -70,6 +70,72 @@ function fmtDate(iso) {
     + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+// ── NEGATIVE PROMPT SYSTEM ────────────────────────────────────────────────
+
+const UNIVERSAL_NEGATIVES =
+  "worst quality, low quality, blurry, watermark, text, signature, logo, " +
+  "extra limbs, extra fingers, distorted hands, deformed, bad anatomy, " +
+  "disfigured, ugly, poorly drawn face, mutation, mutated";
+
+const CONFLICT_MAP = [
+  {
+    conditionalNegative: ["bra", "panties", "underwear", "lingerie"],
+    stripIfPositiveContains: ["lingerie", "bra", "panties", "underwear", "corset", "bodice", "bikini", "swimwear"],
+  },
+  {
+    conditionalNegative: ["closed eyes", "eyes closed"],
+    stripIfPositiveContains: ["closed eyes", "eyes closed", "sleeping", "asleep"],
+  },
+  {
+    conditionalNegative: ["open mouth", "mouth open"],
+    stripIfPositiveContains: ["open mouth", "mouth open", "laughing", "speaking", "talking", "singing"],
+  },
+  {
+    conditionalNegative: ["bare shoulders", "bare skin", "exposed skin"],
+    stripIfPositiveContains: ["bare shoulders", "strapless", "off shoulder", "nude", "topless"],
+  },
+  {
+    conditionalNegative: ["looking away", "averted gaze"],
+    stripIfPositiveContains: ["looking away", "averted gaze", "looking off camera", "distant gaze"],
+  },
+  {
+    conditionalNegative: ["standing"],
+    stripIfPositiveContains: ["standing"],
+  },
+  {
+    conditionalNegative: ["sitting"],
+    stripIfPositiveContains: ["sitting", "seated"],
+  },
+  {
+    conditionalNegative: ["lying down", "lying"],
+    stripIfPositiveContains: ["lying", "lying down", "reclined", "reclining"],
+  },
+];
+
+// Builds the final negative prompt client-side after the model response.
+// Incorporates model-generated context negatives, filtered conflict-map conditionals,
+// and universal negatives — deduplicated in that priority order.
+function buildNegativePrompt(positiveText, haikuNeg = "") {
+  const posLower = positiveText.toLowerCase();
+
+  const conditionals = [];
+  for (const entry of CONFLICT_MAP) {
+    const hasConflict = entry.stripIfPositiveContains.some(t => posLower.includes(t.toLowerCase()));
+    if (!hasConflict) conditionals.push(...entry.conditionalNegative);
+  }
+
+  const seen = new Set();
+  const deduped = [];
+  for (const segment of [haikuNeg, conditionals.join(", "), UNIVERSAL_NEGATIVES]) {
+    for (const token of segment.split(",")) {
+      const clean = token.trim();
+      const key   = clean.toLowerCase();
+      if (clean && !seen.has(key)) { seen.add(key); deduped.push(clean); }
+    }
+  }
+  return deduped.join(", ");
+}
+
 // ── STEP DATA ──────────────────────────────────────────────────────────────
 const STYLE_OPTIONS = {
   renderMode: ["Photorealistic","Cinematic","Oil Painting","Watercolour","Digital Illustration","Anime / Manga","Sketch / Lineart","3D Render","Concept Art","Graphic Novel"],
@@ -569,10 +635,12 @@ Output ONLY the two sections. Nothing else.${ponyNote}`;
         body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system, messages: [{ role: "user", content: userMsg }] }),
       });
       const data = await res.json();
-      const raw   = data.content?.map(b => b.text || "").join("").trim();
-      const parts = raw.split("|||NEGATIVE|||");
-      setGeneratedPrompt(parts[0]?.trim() || raw);
-      setGeneratedNegative(parts[1]?.trim() || DEFAULT_NEGATIVE);
+      const raw     = data.content?.map(b => b.text || "").join("").trim();
+      const parts   = raw.split("|||NEGATIVE|||");
+      const haikuPos = parts[0]?.trim() || raw;
+      const haikuNeg = parts[1]?.trim() || "";
+      setGeneratedPrompt(haikuPos);
+      setGeneratedNegative(buildNegativePrompt(haikuPos, haikuNeg));
       setIsDone(true);
     } catch {
       setError("Generation failed. Please try again.");
