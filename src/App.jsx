@@ -85,8 +85,8 @@ const SCENE_STEPS_CHARACTER = [
   {
     id: "pose", label: "Pose & Expression", icon: "◐", description: "What is the character doing?",
     fields: [
-      { id: "pose", label: "Body Pose", type: "text", placeholder: "e.g. standing, seated, mid-stride" },
-      { id: "expression", label: "Facial Expression", type: "text", placeholder: "e.g. soft smile, intense gaze" },
+      { id: "pose", label: "Body Pose", type: "pose-select", options: ["Sitting","Standing","Leaning","Lying","Crouching"] },
+      { id: "expression", label: "Facial Expression", type: "expression-select", options: ["Smiling","Frowning","Angry","Pouting","Eyes open","Eyes part closed","Eyes closed","Mouth open","Lips parted","Mouth closed","Brows both raised","Brow left raised","Brow right raised"] },
       { id: "action", label: "Action / Motion", type: "text", placeholder: "e.g. looking over shoulder, reading" },
       { id: "camera_angle", label: "Camera Angle", type: "select", options: ["","Eye level","Low angle","High angle","Dutch angle","Close-up / portrait","Medium shot","Full body","Cowboy shot","Over the shoulder"] },
     ],
@@ -234,10 +234,11 @@ function StyleStep({ style, setStyle, sdModel, setSdModel }) {
 }
 
 function LightingSetupStep({ value, onChange }) {
+  const toggle = (o) => onChange(value.includes(o) ? value.filter(v => v !== o) : [...value, o]);
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
       {LIGHTING_SETUP_OPTIONS.map(o => (
-        <OptionTile key={o} label={o} active={value === o} onClick={() => onChange(value === o ? "" : o)} />
+        <OptionTile key={o} label={o} active={value.includes(o)} onClick={() => toggle(o)} />
       ))}
     </div>
   );
@@ -286,7 +287,7 @@ export default function App() {
   const [answers, setAnswers] = useState({});
   const [sdModel, setSdModel] = useState("sdxl");
   const [styleState, setStyleState] = useState({ renderMode: "", colourMode: "", shootType: "", finish: "" });
-  const [lightingSetup, setLightingSetup] = useState("");
+  const [lightingSetup, setLightingSetup] = useState([]);
   const [lightingQuality, setLightingQuality] = useState({ quality: "", source: "", temperature: "", tonal: "" });
   const [selectedQuality, setSelectedQuality] = useState(DEFAULT_QUALITY);
 
@@ -377,7 +378,7 @@ Cover: face shape, skin tone, eye colour and shape, nose, lips, hair (colour, le
     setAnswers({});
     setSdModel("sdxl");
     setStyleState({ renderMode: "", colourMode: "", shootType: "", finish: "" });
-    setLightingSetup("");
+    setLightingSetup([]);
     setLightingQuality({ quality: "", source: "", temperature: "", tonal: "" });
     setSelectedQuality([...DEFAULT_QUALITY]);
     setGeneratedPrompt(""); setGeneratedNegative("");
@@ -395,11 +396,23 @@ Cover: face shape, skin tone, eye colour and shape, nose, lips, hair (colour, le
     if (s.colourMode) lines.push(`Colour mode: ${s.colourMode}`);
     if (s.shootType) lines.push(`Shoot type: ${s.shootType}`);
     if (s.finish) lines.push(`Finish: ${s.finish}`);
-    if (lightingSetup) lines.push(`Lighting setup: ${lightingSetup}`);
+    if (lightingSetup.length) lines.push(`Lighting setup: ${lightingSetup.join(", ")}`);
     STEPS.forEach(st => {
       if (["style","lighting_setup","lighting_quality","output"].includes(st.id)) return;
       st.fields?.forEach(f => {
         if (f.id === "quality_tags") return;
+        if (f.type === "pose-select") {
+          const parts = [answers[f.id + "_sel"], answers[f.id + "_free"]].filter(Boolean).map(s => s.trim()).filter(Boolean);
+          if (parts.length) lines.push(`${f.label}: ${parts.join(", ")}`);
+          return;
+        }
+        if (f.type === "expression-select") {
+          let sel = [];
+          try { sel = JSON.parse(answers[f.id + "_sel"] || "[]"); } catch { sel = []; }
+          const parts = [...sel, answers[f.id + "_free"]].filter(Boolean).map(s => s.trim()).filter(Boolean);
+          if (parts.length) lines.push(`${f.label}: ${parts.join(", ")}`);
+          return;
+        }
         const v = answers[f.id];
         if (v?.trim()) lines.push(`${f.label}: ${v}`);
       });
@@ -702,6 +715,40 @@ Output ONLY the two sections. Nothing else.${ponyNote}`;
                         {field.options.map(tag => <QualityChip key={tag} label={tag} active={selectedQuality.includes(tag)} onClick={() => toggleQuality(tag)} />)}
                       </div>
                     )}
+                    {field.type === "pose-select" && (() => {
+                      const sel = getAnswer(field.id + "_sel") || "";
+                      const free = getAnswer(field.id + "_free") || "";
+                      return (
+                        <div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                            {field.options.map(o => (
+                              <OptionTile key={o} label={o} active={sel === o} onClick={() => setAnswer(field.id + "_sel", sel === o ? "" : o)} />
+                            ))}
+                          </div>
+                          <input className="fi" value={free} onChange={e => setAnswer(field.id + "_free", e.target.value)} placeholder="Additional detail (optional)" style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, color: T.text, transition: "all 0.2s" }} />
+                        </div>
+                      );
+                    })()}
+                    {field.type === "expression-select" && (() => {
+                      const selRaw = getAnswer(field.id + "_sel") || "[]";
+                      let sel = [];
+                      try { sel = JSON.parse(selRaw); } catch { sel = []; }
+                      const free = getAnswer(field.id + "_free") || "";
+                      const toggle = (o) => {
+                        const next = sel.includes(o) ? sel.filter(v => v !== o) : [...sel, o];
+                        setAnswer(field.id + "_sel", JSON.stringify(next));
+                      };
+                      return (
+                        <div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                            {field.options.map(o => (
+                              <OptionTile key={o} label={o} active={sel.includes(o)} onClick={() => toggle(o)} />
+                            ))}
+                          </div>
+                          <input className="fi" value={free} onChange={e => setAnswer(field.id + "_free", e.target.value)} placeholder="Additional detail (optional)" style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, color: T.text, transition: "all 0.2s" }} />
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
